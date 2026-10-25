@@ -1,0 +1,51 @@
+@media (max-width: 760px) {
+  body {
+    flex-direction: column;
+    padding: 12px;
+  }
+
+  .panel,
+  .stage {
+    width: 100%;
+    max-width: none;
+  }
+
+  .panel {
+    order: 1;
+  }
+
+  .stage {
+    order: 2;
+  }
+
+  .row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  label.row {
+    gap: 6px;
+  }
+
+  .seek {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #playBtn,
+  #seek,
+  #timeLabel {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  #startAt {
+    width: 100% !important;
+  }
+
+  .buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
