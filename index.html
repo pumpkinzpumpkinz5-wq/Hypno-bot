@@ -4,7 +4,49 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hypp</title>
-<link rel="stylesheet" href="styles.css">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px system-ui, sans-serif; background: #111; color: #ddd; display: flex; gap: 16px; padding: 16px; flex-wrap: wrap; }
+  .panel { width: 320px; display: flex; flex-direction: column; gap: 14px; }
+  fieldset { border: 1px solid #333; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+  legend { padding: 0 4px; color: #aaa; }
+  select { padding: 4px; background: #1c1c1c; color: #ddd; border: 1px solid #333; border-radius: 4px; }
+  input[type=text] { width: 100%; padding: 6px; background: #1c1c1c; color: #ddd; border: 1px solid #333; border-radius: 4px; }
+  label.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  button { padding: 8px 12px; background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #333; }
+  button:disabled { opacity: .5; cursor: default; }
+  .buttons { display: flex; gap: 8px; }
+  .buttons button { flex: 1; }
+  #status { min-height: 1.4em; color: #9c9; white-space: pre-wrap; }
+  #status.error { color: #e88; }
+  .stage { flex: 1; min-width: 320px; }
+  canvas { width: 100%; max-width: 1280px; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; display: block; }
+  .hint { color: #777; font-size: 12px; }
+  .seek { max-width: 1280px; display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  #seek { flex: 1; }
+  #volume { width: 80px; }
+  .seek button { padding: 8px 10px; }
+  #playBtn { width: 44px; }
+  #muteBtn { width: 40px; }
+  #fitBtn { width: 48px; display: none; }
+  /* Full screen: video fills the screen, controls float at the bottom and fade when the mouse is still */
+  .stage:fullscreen { position: relative; background: #000; }
+  .stage:fullscreen canvas { width: 100vw; height: 100vh; max-width: none; aspect-ratio: auto; object-fit: contain; border-radius: 0; }
+  .stage:fullscreen #fitBtn { display: block; }
+  .stage:fullscreen .seek { position: absolute; left: 0; right: 0; bottom: 0; max-width: none; margin: 0; padding: 24px 20px 16px;
+    background: linear-gradient(transparent, rgba(0,0,0,.85)); transition: opacity .3s; }
+  .stage:fullscreen.idle { cursor: none; }
+  .stage:fullscreen.idle .seek { opacity: 0; pointer-events: none; }
+  #timeLabel { font-variant-numeric: tabular-nums; color: #aaa; }
+  .overlay { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid #2a2a2a; }
+  .overlay .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .overlay button { padding: 2px 8px; }
+  .note { color: #e0b060; font-size: 12px; }
+  label:has(input:disabled) { opacity: .45; }
+  body.dragging fieldset { border-style: dashed; border-color: #666; }
+</style>
 </head>
 <body>
 <div class="panel">
@@ -13,6 +55,7 @@
     <input type="file" id="audioFile" accept="audio/*,video/*">
     <input type="text" id="audioUrl" placeholder="...or paste audio URL">
     <label class="row">Start at <input type="text" id="startAt" placeholder="0:00" style="width: 80px"></label>
+    <div id="listenNote" class="note" hidden>Listen-only: this site blocks downloads, so the spiral can't react to this track and export is off. Download the file and load it for full features.</div>
   </fieldset>
 
   <fieldset>
@@ -25,6 +68,7 @@
     <legend>Picture / GIF</legend>
     <input type="file" id="imageFile" accept="image/*">
     <input type="text" id="imageUrl" placeholder="...or paste image/GIF URL">
+    <label class="row" title="Fill empty space around the picture with repeated copies. Small pictures stay at their own size instead of being stretched.">Tile to fill empty space <input type="checkbox" id="tileSmall" checked></label>
   </fieldset>
 
   <button id="loadBtn">Load</button>
@@ -32,6 +76,7 @@
   <fieldset id="spiralBox">
     <legend>Hypno spiral</legend>
     <label class="row">Enabled <input type="checkbox" id="spiralOn"></label>
+    <label class="row" title="Spiral pulses, brightens and speeds up with the loudness of the audio">React to audio <input type="checkbox" id="spiralReact"></label>
     <label class="row">Pattern
       <select id="spiralPattern">
         <option value="spiral">Spiral</option>
@@ -50,22 +95,746 @@
     <label class="row">Color <input type="color" id="spiralColor" value="#ffffff"></label>
   </fieldset>
 
+  <label class="row">Go full screen when I press Play <input type="checkbox" id="fsOnPlay"></label>
+
   <div class="buttons">
     <button id="exportBtn">Export video</button>
   </div>
   <div id="status"></div>
+  <div class="hint">Keys: Space play/pause · F full screen · ←/→ skip 10s · ↑/↓ volume · M mute · S spiral on/off</div>
   <div class="hint">Drag and drop files anywhere. Use Chrome or Edge. Keep this tab visible while exporting.</div>
 </div>
 
 <div class="stage">
   <canvas id="canvas" width="1280" height="720"></canvas>
   <div class="seek">
-    <button id="playBtn">Play</button>
+    <button id="playBtn" title="Play (Space)">▶︎</button>
     <input type="range" id="seek" min="0" max="0" step="0.1" value="0">
     <span id="timeLabel">0:00 / 0:00</span>
+    <button id="muteBtn" title="Mute">🔊</button>
+    <input type="range" id="volume" min="0" max="1" step="0.01" value="1" title="Volume">
+    <button id="fitBtn" title="Fit or fill the screen">Fill</button>
+    <button id="fsBtn" title="Full screen (F)">⛶</button>
   </div>
 </div>
 
-<script src="script.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const canvas = $('canvas');
+const ctx = canvas.getContext('2d');
+// Two players: wiredAudio runs through Web Audio (mixing, reaction, export). listenAudio plays
+// URLs whose site blocks downloads (CORS); the browser lets it play but not be read, so it goes
+// straight to the speakers. `audio` is whichever one is active.
+const wiredAudio = new Audio();
+const listenAudio = new Audio();
+let audio = wiredAudio;
+const onAudio = (ev, fn) => [wiredAudio, listenAudio].forEach(a => a.addEventListener(ev, fn));
+const statusEl = $('status');
+
+let audioCtx, audioDest;
+let picture = { frames: [], totalDur: 0 };
+let customSpiral = { frames: [], totalDur: 0 };
+let spiralImg = null;
+let spiralAngle = 0;
+let recorder = null;
+
+function setStatus(msg, isError = false) {
+  statusEl.textContent = msg;
+  statusEl.classList.toggle('error', isError);
+}
+
+// Order: picked file, then saved/previously loaded blob, then URL.
+// URLs are fetched to a blob so the canvas never gets tainted (needed for export).
+async function getSlot(fileInput, urlInput, allowListenOnly = false) {
+  const file = fileInput.files[0];
+  if (file) return fileInput.saved = { blob: file, name: file.name };
+  if (fileInput.saved) return fileInput.saved;
+  const url = urlInput.value.trim();
+  if (!url) return null;
+  const name = url.split('/').pop().split('?')[0] || url;
+  let res;
+  try {
+    res = await fetch(url);
+  } catch {
+    const reason = await whyBlocked(url);
+    if (reason === 'cors' && allowListenOnly) return fileInput.saved = { url, name, listenOnly: true };
+    throw new Error({
+      cors: `${name}: this site blocks other pages from loading its files.\nDownload it and pick it with the file button instead.`,
+      notUrl: `"${url}" isn't a web address. It should start with https://`,
+      mixed: `Can't load http:// links from this page. Try the https:// version, or download the file.`,
+      unreachable: `Couldn't reach ${url}\nCheck the address and your connection, or whether an ad blocker is blocking it.`,
+    }[reason]);
+  }
+  if (!res.ok) throw new Error(`Could not load ${url} (HTTP ${res.status})`);
+  return fileInput.saved = { blob: await res.blob(), name };
+}
+
+// fetch() hides why it failed. A "no-cors" request succeeds if the site is reachable at all,
+// which tells a CORS block apart from a bad address or network problem.
+async function whyBlocked(url) {
+  if (!/^https?:\/\//i.test(url)) return 'notUrl';
+  if (location.protocol === 'https:' && /^http:/i.test(url)) return 'mixed';
+  try {
+    await fetch(url, { mode: 'no-cors' });
+    return 'cors';
+  } catch {
+    return 'unreachable';
+  }
+}
+
+// Switch the active player, clearing the other one
+async function setPlayer(el, src) {
+  for (const a of [wiredAudio, listenAudio]) {
+    a.pause();
+    if (a.src.startsWith('blob:')) URL.revokeObjectURL(a.src);
+    a.removeAttribute('src');
+    a.load();
+  }
+  audio = el;
+  el.src = src;
+  if (el === listenAudio) {
+    // Make sure it's actually playable audio before committing to it
+    await new Promise((resolve, reject) => {
+      el.addEventListener('loadedmetadata', resolve, { once: true });
+      el.addEventListener('error', () => reject(new Error(`${src}\nThis site blocks downloads, and the link doesn't play as audio either. Check that it's a direct link to an audio file.`)), { once: true });
+    });
+  }
+  applyVolume();
+  updateListenOnlyUi();
+  audio.onpause();
+  updateSeek();
+}
+
+// While a blocked track is playing: no reaction to it and no export, and say why
+function updateListenOnlyUi() {
+  const lo = audio === listenAudio;
+  $('listenNote').hidden = !lo;
+  $('spiralReact').disabled = lo;
+  $('spiralReact').parentElement.title = lo
+    ? 'Off: the main audio is listen-only (its site blocks downloads)'
+    : 'Spiral pulses, brightens and speeds up with the loudness of the audio';
+  $('exportBtn').disabled = lo;
+  $('exportBtn').parentElement.title = lo ? 'Off: the main audio is listen-only (its site blocks downloads)' : '';
+}
+
+// A new file or URL replaces whatever was saved for that slot
+function wireSlot(fileInput, urlInput) {
+  fileInput.addEventListener('change', () => fileInput.saved = null);
+  urlInput.addEventListener('input', () => { fileInput.saved = null; fileInput.value = ''; });
+}
+wireSlot($('audioFile'), $('audioUrl'));
+wireSlot($('imageFile'), $('imageUrl'));
+wireSlot($('spiralFile'), $('spiralUrl'));
+
+function addOverlayRow(saved) {
+  const row = document.createElement('div');
+  row.className = 'overlay';
+  row.innerHTML = `<div class="row"><input type="file" accept="audio/*,video/*"><button title="Remove">✕</button></div>
+    <input type="text" placeholder="...or paste audio URL">`;
+  const [fileInput, urlInput] = row.querySelectorAll('input');
+  wireSlot(fileInput, urlInput);
+  if (saved) {
+    fileInput.saved = saved;
+    urlInput.value = saved.url || '';
+  }
+  row.querySelector('button').onclick = () => { row.remove(); loadAll(); };
+  $('overlays').append(row);
+  return row;
+}
+$('addOverlay').onclick = () => addOverlayRow();
+
+// Tiny IndexedDB key/value store for the loaded files
+function idb(mode, fn) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('hypp', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const tx = req.result.transaction('kv', mode);
+      const r = fn(tx.objectStore('kv'));
+      tx.oncomplete = () => resolve(r.result);
+      tx.onerror = () => reject(tx.error);
+    };
+  });
+}
+
+// Returns { frames: [{ bmp, dur }], totalDur } — one frame for still images
+async function decodeImage(blob) {
+  const frames = [];
+  let totalDur = 0;
+
+  const isGif = blob.type === 'image/gif' || (await blob.slice(0, 3).text()) === 'GIF';
+  if (isGif && 'ImageDecoder' in window) {
+    const decoder = new ImageDecoder({ data: await blob.arrayBuffer(), type: 'image/gif' });
+    await decoder.tracks.ready;
+    await decoder.completed;
+    const count = decoder.tracks.selectedTrack.frameCount;
+    for (let i = 0; i < count; i++) {
+      const { image } = await decoder.decode({ frameIndex: i });
+      // Browsers treat 0/tiny GIF delays as ~100ms
+      const dur = image.duration && image.duration > 10000 ? image.duration / 1000 : 100;
+      frames.push({ bmp: await createImageBitmap(image), dur });
+      image.close();
+      totalDur += dur;
+    }
+    decoder.close();
+  } else {
+    frames.push({ bmp: await createImageBitmap(blob), dur: 0 });
+  }
+  return { frames, totalDur };
+}
+
+let mainBlob, imageBlob, spiralBlob;
+let overlayBufs = [];
+let overlayNodes = [];
+const decoded = new WeakMap();
+
+async function decodeOverlay(blob) {
+  if (!decoded.has(blob)) decoded.set(blob, await audioCtx.decodeAudioData(await blob.arrayBuffer()));
+  return decoded.get(blob);
+}
+
+async function loadAll(verb = 'Loaded') {
+  setStatus('Loading...');
+  try {
+    ensureAudioGraph();
+    const main = await getSlot($('audioFile'), $('audioUrl'), true);
+    const image = await getSlot($('imageFile'), $('imageUrl'));
+    const spiral = await getSlot($('spiralFile'), $('spiralUrl'));
+    const overlays = [];
+    for (const row of $('overlays').children) {
+      const [fileInput, urlInput] = row.querySelectorAll('input');
+      const o = await getSlot(fileInput, urlInput);
+      if (o) overlays.push({ ...o, url: urlInput.value.trim() });
+    }
+
+    // Only swap what changed, so removing an overlay doesn't restart the main track
+    const mainKey = main && (main.blob || main.url);
+    if (mainKey && mainKey !== mainBlob) {
+      if (main.listenOnly) await setPlayer(listenAudio, main.url);
+      else await setPlayer(wiredAudio, URL.createObjectURL(main.blob));
+      mainBlob = mainKey;
+    }
+    if (image && image.blob !== imageBlob) {
+      imageBlob = image.blob;
+      // Decode the new one before freeing the old, so a frame never tries to draw a freed image
+      const old = picture;
+      picture = await decodeImage(imageBlob);
+      old.frames.forEach(f => f.bmp.close());
+    }
+    if (spiral && spiral.blob !== spiralBlob) {
+      spiralBlob = spiral.blob;
+      const old = customSpiral;
+      customSpiral = await decodeImage(spiralBlob);
+      old.frames.forEach(f => f.bmp.close());
+    }
+    overlayBufs = await Promise.all(overlays.map(o => decodeOverlay(o.blob)));
+    startOverlays();
+
+    idb('readwrite', s => s.put({ main, image, spiral, overlays }, 'session')).catch(() => {});
+    const names = [main, image, spiral, ...overlays].filter(Boolean).map(s => s.listenOnly ? `${s.name} (listen-only)` : s.name);
+    setStatus(names.length ? `${verb}: ${names.join(', ')}` : '');
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+}
+$('loadBtn').onclick = () => loadAll();
+
+// Accepts "90", "1:30" or "1:02:30"
+function startTime() {
+  return $('startAt').value.trim().split(':').reduce((acc, p) => acc * 60 + (+p || 0), 0);
+}
+
+// mix -> outGain -> speakers (volume/mute), and mix -> audioDest (export, always full volume)
+let mix, outGain, analyser, levelBuf;
+function ensureAudioGraph() {
+  if (audioCtx) return;
+  audioCtx = new AudioContext();
+  audioDest = audioCtx.createMediaStreamDestination();
+  mix = audioCtx.createGain();
+  outGain = audioCtx.createGain();
+  mix.connect(outGain).connect(audioCtx.destination);
+  mix.connect(audioDest);
+  // Taps the mix before volume/mute, so the spiral still reacts when muted and in exports
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 1024;
+  levelBuf = new Float32Array(analyser.fftSize);
+  mix.connect(analyser);
+  applyVolume();
+  audioCtx.createMediaElementSource(wiredAudio).connect(mix);
+}
+
+// Overlays follow the main track's clock: looped, restarted on play/seek, stopped on pause/end
+function stopOverlays() {
+  overlayNodes.forEach(n => n.stop());
+  overlayNodes = [];
+}
+function startOverlays() {
+  stopOverlays();
+  if (!audioCtx || audio.paused) return;
+  for (const buf of overlayBufs) {
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.connect(mix);
+    src.start(0, audio.currentTime % buf.duration);
+    overlayNodes.push(src);
+  }
+}
+onAudio('playing', startOverlays);
+onAudio('seeked', startOverlays);
+onAudio('seeking', stopOverlays);
+onAudio('pause', stopOverlays);
+onAudio('ended', stopOverlays);
+
+$('playBtn').onclick = async () => {
+  if (!audio.src) return setStatus('Load an audio file first.', true);
+  ensureAudioGraph();
+  await audioCtx.resume();
+  if (audio.paused) {
+    if ($('fsOnPlay').checked && !document.fullscreenElement) stage.requestFullscreen().catch(() => {});
+    if (audio.currentTime < startTime() || audio.ended) audio.currentTime = startTime();
+    await audio.play();
+  } else audio.pause();
+};
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+function updateSeek() {
+  const d = audio.duration || 0;
+  $('seek').max = d;
+  $('seek').value = audio.currentTime;
+  $('timeLabel').textContent = `${fmt(audio.currentTime)} / ${fmt(d)}`;
+}
+onAudio('loadedmetadata', updateSeek);
+onAudio('timeupdate', updateSeek);
+$('seek').oninput = () => {
+  audio.currentTime = +$('seek').value;
+  updateSeek();
+};
+
+// Space toggles play unless typing. Blocking keyup too stops a focused button from also "clicking".
+const isTyping = e => !!e.target.matches?.('input[type=text]');
+document.addEventListener('keydown', e => {
+  if (e.code !== 'Space' || isTyping(e)) return;
+  e.preventDefault();
+  if (!e.repeat && !$('playBtn').disabled) $('playBtn').click();
+});
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space' && !isTyping(e)) e.preventDefault();
+});
+
+// Full screen: button, F key, or double-click the video. Esc exits (browser default).
+const stage = document.querySelector('.stage');
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else stage.requestFullscreen().catch(e => setStatus(`Full screen not available: ${e.message}`, true));
+}
+$('fsBtn').onclick = toggleFullscreen;
+// Click the video to play/pause. Wait briefly so a double-click (full screen) doesn't also pause.
+let clickTimer;
+canvas.addEventListener('click', e => {
+  if (e.detail !== 1) return;
+  clearTimeout(clickTimer);
+  clickTimer = setTimeout(() => $('playBtn').click(), 250);
+});
+canvas.addEventListener('dblclick', () => {
+  clearTimeout(clickTimer);
+  toggleFullscreen();
+});
+// Shortcuts: F full screen, ←/→ skip 10s, ↑/↓ volume, M mute, S spiral on/off.
+// Holding ←/→/↑/↓ keeps going, at a steady pace rather than the keyboard's raw repeat rate.
+const REPEAT_MS = { ArrowLeft: 200, ArrowRight: 200, ArrowUp: 80, ArrowDown: 80 };
+let lastRepeat = 0;
+function skip(sec) {
+  if ($('seek').disabled || !audio.duration) return; // no skipping during export
+  audio.currentTime = Math.min(Math.max(audio.currentTime + sec, 0), audio.duration - 0.1);
+  updateSeek();
+}
+function nudgeVolume(delta) {
+  const v = $('volume');
+  v.value = Math.min(Math.max(+v.value + delta, 0), 1);
+  v.dispatchEvent(new Event('input', { bubbles: true })); // unmutes, applies and saves
+}
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e) || e.target.matches?.('select')) return;
+  const actions = {
+    KeyF: () => toggleFullscreen(),
+    ArrowLeft: () => skip(-10),
+    ArrowRight: () => skip(10),
+    ArrowUp: () => nudgeVolume(0.05),
+    ArrowDown: () => nudgeVolume(-0.05),
+    KeyM: () => $('muteBtn').click(),
+    KeyS: () => {
+      $('spiralOn').checked = !$('spiralOn').checked;
+      $('spiralOn').dispatchEvent(new Event('input', { bubbles: true })); // saves the setting
+    },
+  };
+  const action = actions[e.code];
+  if (!action) return;
+  e.preventDefault(); // also stops a focused slider from moving on its own
+  if (e.repeat) {
+    if (!REPEAT_MS[e.code] || e.timeStamp - lastRepeat < REPEAT_MS[e.code]) return;
+  }
+  lastRepeat = e.timeStamp;
+  action();
+  if (e.code.startsWith('Arrow') || e.code === 'KeyM') wake(); // show the bar so you can see the change
+});
+
+// Hide controls and cursor after 2s without mouse movement while full screen.
+// Stays visible while the pointer is over the bar, so it doesn't vanish mid-click.
+let idleTimer;
+function goIdle() {
+  if (document.querySelector('.seek:hover')) return wake();
+  stage.classList.add('idle');
+}
+function wake() {
+  stage.classList.remove('idle');
+  clearTimeout(idleTimer);
+  if (document.fullscreenElement) idleTimer = setTimeout(goIdle, 2000);
+}
+// Chrome fires "phantom" mousemoves when the page changes under a still cursor (time counter
+// ticking, cursor being hidden), so only count it when the mouse actually moved.
+let lastX = -1, lastY = -1;
+stage.addEventListener('mousemove', e => {
+  if (e.screenX === lastX && e.screenY === lastY) return;
+  lastX = e.screenX; lastY = e.screenY;
+  wake();
+});
+stage.addEventListener('mousedown', wake);
+document.addEventListener('fullscreenchange', () => {
+  const on = !!document.fullscreenElement;
+  $('fsBtn').textContent = on ? '✕' : '⛶';
+  $('fsBtn').title = on ? 'Exit full screen (F / Esc)' : 'Full screen (F)';
+  $('fsBtn').blur(); // so Space keeps toggling play instead of re-clicking this button
+  wake();
+  // Let the browser finish the full screen switch before the (brief) spiral rebuild
+  setTimeout(updateResolution, 50);
+});
+window.addEventListener('resize', () => { if (document.fullscreenElement) updateResolution(); });
+
+// Full screen renders at the screen's real pixel size (capped at 4K); otherwise, and always
+// while exporting, the canvas stays 1280x720 so exports are consistent.
+function updateResolution() {
+  let w = 1280, h = 720;
+  if (document.fullscreenElement && !recorder) {
+    const dpr = window.devicePixelRatio || 1;
+    w = Math.round(stage.clientWidth * dpr);
+    h = Math.round(stage.clientHeight * dpr);
+    const cap = Math.min(1, 3840 / Math.max(w, h));
+    w = Math.round(w * cap); h = Math.round(h * cap);
+  }
+  if (canvas.width === w && canvas.height === h) return;
+  canvas.width = w;
+  canvas.height = h;
+  buildSpiral();
+}
+
+// ︎ keeps these as plain symbols instead of colour emoji
+wiredAudio.onplay = listenAudio.onplay = () => { $('playBtn').textContent = '⏸︎'; $('playBtn').title = 'Pause (Space)'; };
+wiredAudio.onpause = listenAudio.onpause = () => { $('playBtn').textContent = '▶︎'; $('playBtn').title = 'Play (Space)'; };
+
+// Keep the screen from dimming or sleeping while playing (and exporting). The browser drops the
+// lock when the tab is hidden, so it's re-requested when the tab comes back.
+let wakeLock = null, wakeLockPending = false;
+async function updateWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  const want = !audio.paused && document.visibilityState === 'visible';
+  if (want && !wakeLock && !wakeLockPending) {
+    wakeLockPending = true;
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => wakeLock = null);
+    } catch {}
+    wakeLockPending = false;
+    if (audio.paused) updateWakeLock(); // paused while the request was in flight
+  } else if (!want && wakeLock) {
+    wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
+['play', 'pause', 'ended'].forEach(ev => onAudio(ev, updateWakeLock));
+document.addEventListener('visibilitychange', updateWakeLock);
+
+// Volume and mute only change what you hear, not the exported video
+let muted = false;
+function applyVolume() {
+  const v = +$('volume').value;
+  if (outGain) outGain.gain.value = muted ? 0 : v;
+  listenAudio.volume = muted ? 0 : v; // not in Web Audio, so set directly
+  $('muteBtn').textContent = muted || v === 0 ? '🔇' : v < 0.5 ? '🔉' : '🔊';
+  $('muteBtn').title = muted ? 'Unmute' : 'Mute';
+}
+$('volume').addEventListener('input', () => { muted = false; applyVolume(); saveUi(); });
+$('muteBtn').onclick = () => { muted = !muted; applyVolume(); saveUi(); };
+
+// Full screen fit (black bars) or fill (crop to cover the screen)
+function applyFit(fill) {
+  stage.classList.toggle('fill', fill);
+  $('fitBtn').textContent = fill ? 'Fit' : 'Fill';
+  $('fitBtn').title = fill ? 'Show the whole picture' : 'Fill the screen (crops edges)';
+}
+$('fitBtn').onclick = () => { applyFit(!stage.classList.contains('fill')); saveUi(); };
+
+function saveUi() {
+  try { localStorage.setItem('hypp-ui', JSON.stringify({ muted, fill: stage.classList.contains('fill') })); } catch {}
+}
+try {
+  const ui = JSON.parse(localStorage.getItem('hypp-ui') || '{}');
+  muted = !!ui.muted;
+  applyFit(!!ui.fill);
+} catch {}
+
+// The spiral is pre-rendered and each frame just rotates it. Changes only mark it stale; it's
+// rebuilt at most once per frame, and only while it's actually shown.
+let spiralDirty = true;
+function buildSpiral() { spiralDirty = true; }
+// Drawn as filled shapes (smooth edges, built in milliseconds at any size).
+// Log spirals: a stripe is every point where  angle * arms/2π + twist * ln(r + 1)  has a
+// fractional part below 0.5. So each arm is a band of constant angular width π/arms whose
+// edge is at angle  base - twist * ln(r + 1) / k . r is measured in 1280x720 units, so the
+// pattern looks the same at every resolution and only gets sharper.
+function makeSpiral() {
+  spiralDirty = false;
+  const size = Math.ceil(Math.hypot(canvas.width, canvas.height));
+  const off = new OffscreenCanvas(size, size);
+  const octx = off.getContext('2d');
+  const [arms, twist] = { spiral: [4, 3], tight: [6, 5], many: [8, 2], sunburst: [16, 0] }[$('spiralPattern').value] || [4, 3];
+  const unit = size / Math.hypot(1280, 720);
+  const R = size / 2 / unit + 2; // reach just past the corners
+  const k = arms / (2 * Math.PI), width = Math.PI / arms;
+  const uMax = Math.log(R + 1);
+  const steps = Math.max(2, Math.ceil(uMax * twist / k / 0.01)); // a point every ~0.01 rad keeps curves smooth
+  const edge = new Float64Array((steps + 1) * 2); // x, y of the band's leading edge for arm 0
+  for (let s = 0; s <= steps; s++) {
+    const u = uMax * s / steps, r = Math.exp(u) - 1, a = -twist * u / k;
+    edge[s * 2] = r * Math.cos(a);
+    edge[s * 2 + 1] = r * Math.sin(a);
+  }
+  const outer = -twist * uMax / k;
+  octx.translate(size / 2, size / 2);
+  octx.scale(unit, unit);
+  octx.fillStyle = $('spiralColor').value;
+  for (let j = 0; j < arms; j++) {
+    octx.save();
+    octx.rotate(j * 2 * Math.PI / arms);
+    octx.beginPath();
+    // Out along the leading edge, round the outer rim, back along the trailing edge (same curve, rotated)
+    octx.moveTo(edge[0], edge[1]);
+    for (let s = 1; s <= steps; s++) octx.lineTo(edge[s * 2], edge[s * 2 + 1]);
+    octx.arc(0, 0, R, outer, outer + width);
+    const cw = Math.cos(width), sw = Math.sin(width);
+    for (let s = steps; s >= 0; s--) {
+      const x = edge[s * 2], y = edge[s * 2 + 1];
+      octx.lineTo(x * cw - y * sw, x * sw + y * cw);
+    }
+    octx.closePath();
+    octx.fill();
+    octx.restore();
+  }
+  spiralImg = off;
+}
+$('spiralColor').oninput = buildSpiral;
+$('spiralPattern').onchange = () => {
+  $('customSpiral').hidden = $('spiralPattern').value !== 'custom';
+  buildSpiral();
+};
+buildSpiral();
+
+function currentFrame({ frames, totalDur }, now) {
+  if (frames.length <= 1) return frames[0]?.bmp;
+  let t = now % totalDur;
+  for (const f of frames) {
+    if (t < f.dur) return f.bmp;
+    t -= f.dur;
+  }
+  return frames[frames.length - 1].bmp;
+}
+
+// Loudness from 0 to 1 for the reactive spiral. It's measured relative to the track's own recent
+// peaks, so quiet and loud tracks both get the full range. Rises fast, falls slowly, so it pulses.
+let level = 0, peak = 0.02;
+function audioLevel() {
+  if (!analyser || audio.paused) return level *= 0.92;
+  analyser.getFloatTimeDomainData(levelBuf);
+  let sum = 0;
+  for (const v of levelBuf) sum += v * v;
+  const rms = Math.sqrt(sum / levelBuf.length);
+  peak = Math.max(rms, peak * 0.998, 0.02);
+  const target = Math.min(1, rms / peak) ** 2; // squared so quiet parts stay calm and beats stand out
+  level += (target - level) * (target > level ? 0.5 : 0.08);
+  return level;
+}
+
+const tilePatterns = new WeakMap(); // one repeating pattern per image / GIF frame
+let last = performance.now();
+function render(now) {
+  const dt = (now - last) / 1000;
+  last = now;
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  const bmp = currentFrame(picture, now);
+  // Fill (full screen only) crops the picture to cover the screen, so there's nothing to tile
+  const fill = document.fullscreenElement && stage.classList.contains('fill') && !recorder;
+  if (bmp && $('tileSmall').checked && !fill) {
+    // Tile: one copy centred, shrunk to fit if it's bigger than the frame but never stretched up,
+    // and repeated into any leftover space (sides, top/bottom, or both).
+    // Sizes are in 1280x720 units, so tiles look the same in the preview, full screen and exports.
+    const unit = Math.hypot(W, H) / Math.hypot(1280, 720);
+    const s = Math.min(unit, W / bmp.width, H / bmp.height);
+    const tw = bmp.width * s, th = bmp.height * s;
+    let pattern = tilePatterns.get(bmp);
+    if (!pattern) tilePatterns.set(bmp, pattern = ctx.createPattern(bmp, 'repeat'));
+    pattern.setTransform(new DOMMatrix().translate((W - tw) / 2, (H - th) / 2).scale(s));
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, W, H);
+  } else if (bmp) {
+    // Fit shows the whole picture (stretched up if small); Fill crops it to cover the screen
+    const s = (fill ? Math.max : Math.min)(W / bmp.width, H / bmp.height);
+    const w = bmp.width * s, h = bmp.height * s;
+    ctx.drawImage(bmp, (W - w) / 2, (H - h) / 2, w, h);
+  }
+
+  if ($('spiralOn').checked) {
+    const react = $('spiralReact').checked && !$('spiralReact').disabled ? audioLevel() : 0;
+    spiralAngle += dt * +$('spiralSpeed').value * (1 + 1.5 * react);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, +$('spiralOpacity').value * (1 + 0.8 * react));
+    ctx.translate(W / 2, H / 2);
+    ctx.rotate(spiralAngle);
+    ctx.scale(1 + 0.12 * react, 1 + 0.12 * react); // pulse outward on loud parts
+    if ($('spiralPattern').value === 'custom') {
+      const sp = currentFrame(customSpiral, now);
+      if (sp) {
+        // Cover the whole frame while rotating; "screen" makes black see-through
+        const s = Math.hypot(W, H) / Math.min(sp.width, sp.height);
+        const w = sp.width * s, h = sp.height * s;
+        ctx.globalCompositeOperation = 'screen';
+        ctx.drawImage(sp, -w / 2, -h / 2, w, h);
+      }
+    } else {
+      if (spiralDirty || !spiralImg) makeSpiral();
+      ctx.drawImage(spiralImg, -spiralImg.width / 2, -spiralImg.height / 2);
+    }
+    ctx.restore();
+  }
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+function pickMime() {
+  return ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
+    .find(m => MediaRecorder.isTypeSupported(m));
+}
+
+$('exportBtn').onclick = async () => {
+  if (recorder) return recorder.stop();
+  if (!audio.src) return setStatus('Load an audio file first.', true);
+  if (audio === listenAudio) return setStatus('Export is off while the main audio is listen-only. Download the file and load it to export.', true);
+  ensureAudioGraph();
+  await audioCtx.resume();
+
+  const mime = pickMime();
+  // Exports are always 1280x720, even if started from full screen
+  if (canvas.width !== 1280 || canvas.height !== 720) {
+    canvas.width = 1280; canvas.height = 720; buildSpiral();
+  }
+  const stream = new MediaStream([
+    ...canvas.captureStream(30).getVideoTracks(),
+    ...audioDest.stream.getAudioTracks(),
+  ]);
+  const chunks = [];
+  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 5_000_000 });
+  recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+  recorder.onstop = () => {
+    audio.pause();
+    audio.ontimeupdate = null;
+    audio.onended = null;
+    const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(chunks, { type: mime }));
+    a.download = `hypp.${ext}`;
+    a.click();
+    recorder = null;
+    updateResolution();
+    $('exportBtn').textContent = 'Export video';
+    $('playBtn').disabled = $('seek').disabled = false;
+    setStatus(`Exported hypp.${ext}`);
+  };
+
+  audio.pause();
+  const start = startTime();
+  audio.currentTime = start;
+  audio.onended = () => recorder?.stop();
+  audio.ontimeupdate = () => {
+    if (audio.duration) setStatus(`Exporting... ${Math.floor((audio.currentTime - start) / (audio.duration - start) * 100)}%`);
+  };
+  $('exportBtn').textContent = 'Stop export';
+  $('playBtn').disabled = $('seek').disabled = true;
+  recorder.start(1000);
+  await audio.play();
+};
+
+// Drag & drop: onto a box/row targets it; elsewhere images go to the picture, audio to main (if empty) or a new overlay
+function setFile(fileInput, file) {
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  fileInput.files = dt.files;
+  fileInput.saved = null;
+}
+let dragDepth = 0;
+document.addEventListener('dragenter', () => document.body.classList.toggle('dragging', ++dragDepth > 0));
+document.addEventListener('dragleave', () => document.body.classList.toggle('dragging', --dragDepth > 0));
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove('dragging');
+  const target = e.target.closest('#overlays .overlay, fieldset');
+  [...e.dataTransfer.files].forEach((file, i) => {
+    const isImage = file.type.startsWith('image/');
+    if (i === 0 && target?.classList.contains('overlay')) setFile(target.querySelector('input[type=file]'), file);
+    else if (i === 0 && target?.contains($('audioFile')) && !isImage) setFile($('audioFile'), file);
+    else if (i === 0 && target?.id === 'spiralBox' && isImage) {
+      setFile($('spiralFile'), file);
+      $('spiralPattern').value = 'custom';
+      $('spiralPattern').dispatchEvent(new Event('change'));
+      $('spiralPattern').dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    else if (isImage) setFile($('imageFile'), file);
+    else if (!mainBlob && !$('audioFile').files[0] && !(i === 0 && target?.contains($('addOverlay')))) setFile($('audioFile'), file);
+    else setFile(addOverlayRow().querySelector('input[type=file]'), file);
+  });
+  loadAll();
+});
+
+// Remember text fields and spiral settings
+const savedFields = ['audioUrl', 'imageUrl', 'spiralUrl', 'spiralPattern', 'startAt', 'spiralOn', 'spiralOpacity', 'spiralSpeed', 'spiralColor', 'volume', 'fsOnPlay', 'spiralReact', 'tileSmall'];
+try {
+  const saved = JSON.parse(localStorage.getItem('hypp') || '{}');
+  for (const id of savedFields) {
+    if (!(id in saved)) continue;
+    if ($(id).type === 'checkbox') $(id).checked = saved[id]; else $(id).value = saved[id];
+  }
+  $('spiralPattern').onchange();
+} catch {}
+applyVolume();
+document.addEventListener('input', () => {
+  try {
+    localStorage.setItem('hypp', JSON.stringify(Object.fromEntries(
+      savedFields.map(id => [id, $(id).type === 'checkbox' ? $(id).checked : $(id).value]))));
+  } catch {}
+});
+
+// Restore last loaded files
+idb('readonly', s => s.get('session')).then(session => {
+  if (!session) return;
+  $('audioFile').saved = session.main;
+  $('imageFile').saved = session.image;
+  $('spiralFile').saved = session.spiral;
+  session.overlays.forEach(addOverlayRow);
+  loadAll('Restored');
+}).catch(() => {});
+</script>
 </body>
 </html>
