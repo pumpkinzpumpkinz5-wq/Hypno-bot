@@ -1,5 +1,6 @@
 // Serves the app and relays live sessions. No dependencies: `node server.js`
 // PORT (default 8080) and HOST (default 127.0.0.1; use 0.0.0.0 to let other devices join).
+// REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET (a Reddit "script" app) turn on "Add from Reddit".
 // Rooms live in memory: the host posts its state and files, viewers get the state over
 // Server-Sent Events. Everything is gone when the server stops.
 const http = require('http');
@@ -14,6 +15,8 @@ const MAX_ROOM_BYTES = 1024 ** 3; // uploaded files per room
 const MAX_STATE_BYTES = 1024 ** 2;
 const ROOM_TTL = 2 * 60 * 60 * 1000; // dropped after 2h without word from the host
 const ROOM_NAME = /^[a-z0-9][a-z0-9-]{1,31}$/;
+const { REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET } = process.env;
+const REDDIT_UA = process.env.REDDIT_USER_AGENT || 'hypp/1.0 (personal slideshow)';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -49,6 +52,8 @@ function readBody(req, limit) {
 }
 
 const event = room => `data: {"age":${Date.now() - room.stateAt},"state":${room.state}}\n\n`;
+const chatEvent = msg => `event: chat\ndata: ${JSON.stringify(msg)}\n\n`;
+const CHAT_HISTORY = 50;
 
 function closeRoom(id) {
   const room = rooms.get(id);
@@ -61,7 +66,7 @@ setInterval(() => {
   for (const [id, room] of rooms) if (Date.now() - room.touched > ROOM_TTL) closeRoom(id);
 }, 10 * 60 * 1000).unref();
 
-async function handleLive(req, res, parts) {
+async function handleLive(req, res, parts, query) {
   const [id, action, fileId] = parts;
   if (id === 'ping' && !action) return send(res, 200, 'ok');
   if (!id && req.method === 'POST') {
@@ -79,7 +84,7 @@ async function handleLive(req, res, parts) {
       }
       roomId = name;
     }
-    const room = { key: newId(16), state: null, stateAt: 0, clients: new Set(), files: new Map(), bytes: 0, touched: Date.now() };
+    const room = { key: newId(16), state: null, stateAt: 0, clients: new Set(), chat: [], files: new Map(), bytes: 0, touched: Date.now() };
     rooms.set(roomId, room);
     return json(res, { id: roomId, key: room.key });
   }
@@ -91,6 +96,8 @@ async function handleLive(req, res, parts) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
     res.write('retry: 2000\n\n');
     if (room.state) res.write(event(room));
+    for (const msg of room.chat) res.write(chatEvent(msg));
+    res.host = query.get('key') === room.key; // the host listens for chat; not counted as a viewer
     room.clients.add(res);
     const ping = setInterval(() => res.write(': ping\n\n'), 25000);
     req.on('close', () => { clearInterval(ping); room.clients.delete(res); });
@@ -101,6 +108,17 @@ async function handleLive(req, res, parts) {
     if (!file) return send(res, 404, 'No such file');
     res.writeHead(200, { 'content-type': file.type, 'content-length': file.buf.length, 'cache-control': 'private, max-age=86400' });
     return res.end(file.buf);
+  }
+
+  if (action === 'chat' && req.method === 'POST') {
+    const { name, text } = JSON.parse(await readBody(req, 4096));
+    const msg = { name: String(name || '').trim().slice(0, 24) || (isHost ? 'Host' : 'Anon'), text: String(text || '').trim().slice(0, 300) };
+    if (!msg.text) return send(res, 400, 'Empty message');
+    room.chat.push(msg);
+    if (room.chat.length > CHAT_HISTORY) room.chat.shift();
+    const out = chatEvent(msg);
+    for (const c of room.clients) c.write(out);
+    return json(res, {});
   }
 
   if (!isHost) return send(res, 403, 'Only the host can do that');
@@ -115,7 +133,7 @@ async function handleLive(req, res, parts) {
     room.stateAt = Date.now();
     const msg = event(room);
     for (const c of room.clients) c.write(msg);
-    return json(res, { viewers: room.clients.size });
+    return json(res, { viewers: [...room.clients].filter(c => !c.host).length });
   }
   if (action === 'file' && !fileId && req.method === 'POST') {
     const buf = await readBody(req, MAX_ROOM_BYTES - room.bytes);
@@ -125,6 +143,55 @@ async function handleLive(req, res, parts) {
     return json(res, { url: `live/${id}/file/${fid}` });
   }
   send(res, 404, 'Not found');
+}
+
+// Reddit: app-only sign-in with the server's own app, so nobody has to log in.
+// The token is kept until shortly before it expires.
+let redditAuth = null; // { token, expires }
+async function redditToken() {
+  if (redditAuth && redditAuth.expires > Date.now()) return redditAuth.token;
+  const r = await fetch('https://www.reddit.com/api/v1/access_token', {
+    method: 'POST',
+    headers: {
+      authorization: 'Basic ' + Buffer.from(`${REDDIT_CLIENT_ID}:${REDDIT_CLIENT_SECRET}`).toString('base64'),
+      'content-type': 'application/x-www-form-urlencoded',
+      'user-agent': REDDIT_UA,
+    },
+    body: 'grant_type=client_credentials',
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok || !body.access_token) {
+    throw Object.assign(new Error(`Reddit sign-in failed (HTTP ${r.status}${body.error ? `, ${body.error}` : ''}). Check REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET.`), { status: 502 });
+  }
+  redditAuth = { token: body.access_token, expires: Date.now() + ((body.expires_in || 3600) - 60) * 1000 };
+  return redditAuth.token;
+}
+
+async function handleReddit(req, res, parts) {
+  if (parts[0] === 'status') return json(res, { configured: !!(REDDIT_CLIENT_ID && REDDIT_CLIENT_SECRET) });
+  if (!REDDIT_CLIENT_ID || !REDDIT_CLIENT_SECRET) return send(res, 503, 'Reddit isn\'t set up on the server.');
+  const [r, sub, sort] = parts;
+  if (r !== 'r' || !/^\w{2,21}$/.test(sub || '') || !['hot', 'top', 'new'].includes(sort)) return send(res, 400, 'Bad subreddit');
+  const url = `https://oauth.reddit.com/r/${sub}/${sort}?limit=100&t=all&raw_json=1`;
+  const get = async () => fetch(url, { headers: { authorization: `bearer ${await redditToken()}`, 'user-agent': REDDIT_UA } });
+  let rr;
+  try {
+    rr = await get();
+    if (rr.status === 401) { // token revoked early: get a new one and try once more
+      redditAuth = null;
+      rr = await get();
+    }
+  } catch (e) {
+    return send(res, 502, e.status ? e.message : `Couldn't reach Reddit.`);
+  }
+  if (!rr.ok) {
+    return send(res, rr.status === 404 ? 404 : 502, {
+      403: 'Reddit refused (private or banned subreddit, or the Reddit app has no API access).',
+      404: 'No such subreddit.',
+      429: 'Reddit is rate limiting. Try again in a minute.',
+    }[rr.status] || `Reddit said HTTP ${rr.status}.`);
+  }
+  send(res, 200, await rr.text(), 'application/json');
 }
 
 function serveStatic(req, res, urlPath) {
@@ -144,9 +211,10 @@ function serveStatic(req, res, urlPath) {
 
 http.createServer(async (req, res) => {
   try {
-    const { pathname } = new URL(req.url, 'http://x');
+    const { pathname, searchParams } = new URL(req.url, 'http://x');
     const parts = pathname.split('/').filter(Boolean);
-    if (parts[0] === 'live') await handleLive(req, res, parts.slice(1));
+    if (parts[0] === 'live') await handleLive(req, res, parts.slice(1), searchParams);
+    else if (parts[0] === 'reddit') await handleReddit(req, res, parts.slice(1));
     else serveStatic(req, res, pathname);
   } catch (e) {
     if (!res.headersSent) send(res, e.status || 400, e.status ? e.message : 'Bad request');

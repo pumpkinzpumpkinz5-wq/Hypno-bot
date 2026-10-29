@@ -17,9 +17,15 @@ Files from your computer are uploaded to the server (in memory) so viewers get t
 For viewers outside your network, the server has to be reachable from the internet (hosting or a tunnel).
 
 ## Reddit
-Reddit only answers logged-in users, so it needs a one-time setup:
-1. At https://www.reddit.com/prefs/apps create an app of type **installed app**.
-2. Set its redirect URI to the address of the folder the app is served from, e.g. `http://localhost:8080/`.
-3. Put the app's client ID in `REDDIT_CLIENT_ID` at the top of `index.html`.
+"Add from Reddit" works without setup by reading redditp's public archive: popular subreddits only, their Hot page (25 posts), updated every few weeks.
 
-The first "Add from Reddit" opens a Reddit login window. The login lasts about an hour.
+For live results, `server.js` can sign in to Reddit with its own app instead (Reddit now has to approve new apps, see its Responsible Builder Policy).
+One-time setup:
+1. At https://www.reddit.com/prefs/apps click "create another app", pick **script**, any name, and any redirect URI (e.g. `http://localhost:8080`; it isn't used).
+2. Start the server with the app's ID (shown under its name) and secret:
+
+```
+REDDIT_CLIENT_ID=... REDDIT_CLIENT_SECRET=... node server.js
+```
+
+With these set, the Hot/Top/New choice shows and results are live.
