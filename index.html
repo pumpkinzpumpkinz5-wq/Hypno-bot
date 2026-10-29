@@ -19,9 +19,15 @@
   button:disabled { opacity: .5; cursor: default; }
   .buttons { display: flex; gap: 8px; }
   .buttons button { flex: 1; }
-  #status { min-height: 1.4em; color: #9c9; white-space: pre-wrap; }
-  #status.error { color: #e88; }
-  .stage { flex: 1; min-width: 320px; }
+  #liveRow input { flex: 1; min-width: 0; }
+  #liveRow button { flex: 0 0 auto; white-space: nowrap; }
+  input[type=number] { padding: 6px; background: #1c1c1c; color: #ddd; border: 1px solid #333; border-radius: 4px; }
+  textarea { width: 100%; padding: 6px; background: #1c1c1c; color: #ddd; border: 1px solid #333; border-radius: 4px; font: inherit; resize: vertical; }
+  #status, #dlgStatus { min-height: 1.4em; color: #9c9; white-space: pre-wrap; }
+  #status.error, #dlgStatus.error { color: #e88; }
+  .stage { flex: 1; min-width: 320px; position: relative; }
+  #joinBtn { position: absolute; left: min(50%, 640px); top: min(40%, 300px); transform: translate(-50%, -50%); padding: 14px 22px; font-size: 16px; }
+  body.viewer .panel > :not(#status, #viewerNote) { display: none; }
   canvas { width: 100%; max-width: 1280px; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; display: block; }
   .hint { color: #777; font-size: 12px; }
   .seek { max-width: 1280px; display: flex; align-items: center; gap: 10px; margin-top: 8px; }
@@ -46,6 +52,22 @@
   .note { color: #e0b060; font-size: 12px; }
   label:has(input:disabled) { opacity: .45; }
   body.dragging fieldset { border-style: dashed; border-color: #666; }
+  dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; background: #161616; color: #ddd; border: 1px solid #333; border-radius: 10px; }
+  dialog::backdrop { background: rgba(0,0,0,.7); }
+  .dlg { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .dlgHead { display: flex; justify-content: space-between; align-items: center; }
+  .dlgHead button { padding: 2px 8px; }
+  .dlg .row { display: flex; gap: 8px; }
+  #dropZone { border: 2px dashed #444; border-radius: 8px; padding: 18px; text-align: center; color: #999; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  body.dragging #dropZone { border-color: #9c9; color: #ddd; }
+  #thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+  .thumb { position: relative; aspect-ratio: 1; background: #222; border: 2px solid transparent; border-radius: 4px; overflow: hidden; cursor: pointer; }
+  .thumb.current { border-color: #9c9; }
+  .thumb.bad { border-color: #e88; opacity: .6; }
+  .thumb img, .thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb button { position: absolute; top: 2px; right: 2px; padding: 0 6px; background: rgba(0,0,0,.7); }
+  .thumb input { position: absolute; left: 2px; bottom: 2px; width: 56px; padding: 1px 4px; font-size: 11px; background: rgba(0,0,0,.75); }
+  .thumb .badge { position: absolute; left: 4px; top: 2px; font-size: 11px; text-shadow: 0 0 3px #000; }
 </style>
 </head>
 <body>
@@ -53,7 +75,7 @@
   <fieldset>
     <legend>Main audio</legend>
     <input type="file" id="audioFile" accept="audio/*,video/*">
-    <input type="text" id="audioUrl" value= "https://media.soundgasm.net/sounds/1bb379f5e7cc05727646e3aaba303bca0d81052f.m4a" placeholder="...or paste audio URL">
+    <input type="text" id="audioUrl" placeholder="...or paste audio URL">
     <label class="row">Start at <input type="text" id="startAt" placeholder="0:00" style="width: 80px"></label>
     <div id="listenNote" class="note" hidden>Listen-only: this site blocks downloads, so the spiral can't react to this track and export is off. Download the file and load it for full features.</div>
   </fieldset>
@@ -65,9 +87,11 @@
   </fieldset>
 
   <fieldset id="imageBox">
-    <legend>Picture / GIF</legend>
-    <input type="file" id="imageFile" accept="image/*">
-    <input type="text" id="imageUrl" value="https://i.postimg.cc/4dBcp441/ce3e6d9e2749499894995190b95b2805.png" placeholder="...or paste image/GIF URL">
+    <legend>Pictures / GIFs / videos</legend>
+    <button id="picturesBtn">Pictures… (0)</button>
+    <label class="row" title="Default for each picture. Set your own per picture in the Pictures window. Videos play to the end unless you set a time.">Seconds per picture <input type="number" id="slideSecs" min="1" step="1" value="10" style="width: 80px"></label>
+    <label class="row">Shuffle <input type="checkbox" id="shuffle"></label>
+    <label class="row">Crossfade <input type="checkbox" id="crossfade" checked></label>
     <label class="row" title="Fill empty space around the picture with repeated copies. Small pictures stay at their own size instead of being stretched.">Tile to fill empty space <input type="checkbox" id="tileSmall" checked></label>
   </fieldset>
 
@@ -100,13 +124,22 @@
   <div class="buttons">
     <button id="exportBtn">Export video</button>
   </div>
+  <div class="buttons">
+    <button id="shareBtn" title="Copy a link that opens this setup. Only web links can be shared; pictures and audio from your computer are left out.">Share setup</button>
+  </div>
+  <div class="buttons" id="liveRow" hidden>
+    <input type="text" id="roomName" placeholder="Room name (optional)" title="Pick a name to get the same link every time, e.g. yoursite.com/my-room">
+    <button id="liveBtn" title="Let others watch along in real time">Go live</button>
+  </div>
   <div id="status"></div>
-  <div class="hint">Keys: Space play/pause · F full screen · ←/→ skip 10s · ↑/↓ volume · M mute · S spiral on/off</div>
+  <div id="viewerNote" class="hint" hidden>You're watching a live session. The host controls playback.</div>
+  <div class="hint">Keys: Space play/pause · F full screen · ←/→ skip 10s · ↑/↓ volume · M mute · S spiral on/off · N/P next/previous picture</div>
   <div class="hint">Drag and drop files anywhere. Use Chrome or Edge. Keep this tab visible while exporting.</div>
 </div>
 
 <div class="stage">
   <canvas id="canvas" width="1280" height="720"></canvas>
+  <button id="joinBtn" hidden>▶︎ Join live session</button>
   <div class="seek">
     <button id="playBtn" title="Play (Space)">▶︎</button>
     <input type="range" id="seek" min="0" max="0" step="0.1" value="0">
@@ -118,8 +151,41 @@
   </div>
 </div>
 
+<dialog id="imagesDlg">
+  <div class="dlg">
+    <div class="dlgHead"><b>Pictures</b><button id="closeImages" title="Close (Esc)">✕</button></div>
+    <div id="dropZone">
+      Drop pictures, GIFs or videos here
+      <div class="buttons"><button id="pickImages">Choose files</button><button id="pickFolder">Choose folder</button></div>
+    </div>
+    <input type="file" id="imageFiles" accept="image/*,video/*" multiple hidden>
+    <input type="file" id="imageFolder" webkitdirectory hidden>
+    <textarea id="imageUrls" rows="3" placeholder="...or paste picture/GIF/video URLs, one per line"></textarea>
+    <button id="addUrls">Add URLs</button>
+    <div class="row">
+      <input type="text" id="subreddit" placeholder="Subreddit, e.g. wallpapers">
+      <select id="redditSort">
+        <option value="hot">Hot</option>
+        <option value="top">Top</option>
+        <option value="new">New</option>
+      </select>
+      <button id="addReddit" title="Adds the pictures from up to 100 posts. Asks you to log in to Reddit the first time.">Add from Reddit</button>
+    </div>
+    <div id="dlgStatus"></div>
+    <div class="hint">Click a thumbnail to show it now. The box on each one sets its own seconds (blank = default; videos play to the end).</div>
+    <div id="thumbs"></div>
+    <div class="buttons"><button id="clearImages">Clear all</button></div>
+  </div>
+</dialog>
+
 <script>
 const $ = id => document.getElementById(id);
+const DEFAULT_AUDIO_URL = '';
+const DEFAULT_IMAGE_URLS = [];
+// Reddit only answers logged-in users. Register an "installed app" at https://www.reddit.com/prefs/apps
+// with this page's folder address as the redirect URI (e.g. http://localhost:8080/), and put its ID here.
+const REDDIT_CLIENT_ID = '';
+$('audioUrl').value = DEFAULT_AUDIO_URL;
 const canvas = $('canvas');
 const ctx = canvas.getContext('2d');
 // Two players: wiredAudio runs through Web Audio (mixing, reaction, export). listenAudio plays
@@ -132,41 +198,51 @@ const onAudio = (ev, fn) => [wiredAudio, listenAudio].forEach(a => a.addEventLis
 const statusEl = $('status');
 
 let audioCtx, audioDest;
-let picture = { frames: [], totalDur: 0 };
 let customSpiral = { frames: [], totalDur: 0 };
 let spiralImg = null;
 let spiralAngle = 0;
 let recorder = null;
 
-function setStatus(msg, isError = false) {
-  statusEl.textContent = msg;
-  statusEl.classList.toggle('error', isError);
+function setStatus(msg, isError = false, el = statusEl) {
+  el.textContent = msg;
+  el.classList.toggle('error', isError);
+}
+
+const urlName = url => url.split('/').pop().split('?')[0] || url;
+
+// URLs are fetched to a blob so the canvas never gets tainted (needed for export).
+// The error's `reason` is 'cors' when only the site's CORS policy stopped it.
+async function fetchBlob(url) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch {
+    const reason = await whyBlocked(url);
+    throw Object.assign(new Error({
+      cors: `${urlName(url)}: this site blocks other pages from loading its files.\nDownload it and pick it with the file button instead.`,
+      notUrl: `"${url}" isn't a web address. It should start with https://`,
+      mixed: `Can't load http:// links from this page. Try the https:// version, or download the file.`,
+      unreachable: `Couldn't reach ${url}\nCheck the address and your connection, or whether an ad blocker is blocking it.`,
+    }[reason]), { reason });
+  }
+  if (!res.ok) throw new Error(`Could not load ${url} (HTTP ${res.status})`);
+  return res.blob();
 }
 
 // Order: picked file, then saved/previously loaded blob, then URL.
-// URLs are fetched to a blob so the canvas never gets tainted (needed for export).
 async function getSlot(fileInput, urlInput, allowListenOnly = false) {
   const file = fileInput.files[0];
   if (file) return fileInput.saved = { blob: file, name: file.name };
   if (fileInput.saved) return fileInput.saved;
   const url = urlInput.value.trim();
   if (!url) return null;
-  const name = url.split('/').pop().split('?')[0] || url;
-  let res;
+  const name = urlName(url);
   try {
-    res = await fetch(url);
-  } catch {
-    const reason = await whyBlocked(url);
-    if (reason === 'cors' && allowListenOnly) return fileInput.saved = { url, name, listenOnly: true };
-    throw new Error({
-      cors: `${name}: this site blocks other pages from loading its files.\nDownload it and pick it with the file button instead.`,
-      notUrl: `"${url}" isn't a web address. It should start with https://`,
-      mixed: `Can't load http:// links from this page. Try the https:// version, or download the file.`,
-      unreachable: `Couldn't reach ${url}\nCheck the address and your connection, or whether an ad blocker is blocking it.`,
-    }[reason]);
+    return fileInput.saved = { blob: await fetchBlob(url), name, url };
+  } catch (e) {
+    if (e.reason === 'cors' && allowListenOnly) return fileInput.saved = { url, name, listenOnly: true };
+    throw e;
   }
-  if (!res.ok) throw new Error(`Could not load ${url} (HTTP ${res.status})`);
-  return fileInput.saved = { blob: await res.blob(), name };
 }
 
 // fetch() hides why it failed. A "no-cors" request succeeds if the site is reachable at all,
@@ -223,7 +299,6 @@ function wireSlot(fileInput, urlInput) {
   urlInput.addEventListener('input', () => { fileInput.saved = null; fileInput.value = ''; });
 }
 wireSlot($('audioFile'), $('audioUrl'));
-wireSlot($('imageFile'), $('imageUrl'));
 wireSlot($('spiralFile'), $('spiralUrl'));
 
 function addOverlayRow(saved) {
@@ -284,7 +359,315 @@ async function decodeImage(blob) {
   return { frames, totalDur };
 }
 
-let mainBlob, imageBlob, spiralBlob;
+// Slideshow. `images` is the list as added; `order` is the play order (shuffled or not).
+// Items: { name, url | blob, kind: 'image' | 'video', secs? }. Only the pictures on screen or
+// up next are kept decoded, so long lists don't eat memory; URL items are fetched the first
+// time they come up. `pic` is { frames, totalDur } for images or { video } for videos.
+let images = [];
+let order = [];
+let slide = 0, slideT = 0;
+let fadeFrom = null; // picture being faded out
+let following = false; // live viewer: the host decides when to change pictures
+const FADE = 0.8;
+const slideSecs = () => Math.max(1, +$('slideSecs').value || 10);
+const VIDEO_EXT = /\.(mp4|webm|mov|m4v|ogv)(\?|$)/i;
+const isVideoFile = f => f.type.startsWith('video/') || VIDEO_EXT.test(f.name);
+const isImageFile = f => f.type.startsWith('image/') || /\.(jpe?g|png|gif|webp|avif|bmp)$/i.test(f.name);
+const kindOf = name => VIDEO_EXT.test(name) ? 'video' : 'image';
+
+// How long a picture stays up: its own setting, else a video's length, else the default
+function secsFor(item) {
+  if (item.secs) return item.secs;
+  const d = item.pic?.video?.duration;
+  return isFinite(d) && d > 0 ? d : slideSecs();
+}
+
+function freePic(item) {
+  const p = item.pic;
+  item.pic = null;
+  if (!p) return;
+  if (p.video) {
+    p.video.pause();
+    URL.revokeObjectURL(p.video.src);
+    p.video.removeAttribute('src');
+    p.video.load();
+  } else p.frames.forEach(f => f.bmp.close());
+}
+
+async function decodeVideo(blob) {
+  const video = document.createElement('video');
+  video.muted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.src = URL.createObjectURL(blob);
+  await new Promise((resolve, reject) => {
+    video.onloadeddata = resolve;
+    video.onerror = () => { URL.revokeObjectURL(video.src); reject(new Error(`Can't play this video in this browser`)); };
+  });
+  return { video };
+}
+
+function prepare(item) {
+  if (!item || item.pic || item.loading || item.bad) return;
+  item.loading = (async () => {
+    item.blob ||= await fetchBlob(item.url);
+    item.pic = item.kind === 'video' ? await decodeVideo(item.blob) : await decodeImage(item.blob);
+    if (!images.includes(item)) freePic(item); // removed meanwhile
+  })().catch(e => {
+    item.bad = e.message || 'Could not load this picture';
+    renderThumbs();
+  }).finally(() => item.loading = null);
+}
+
+// Next (or previous) slide that hasn't failed to load, or the same one if none
+function nextIndex(i, dir = 1) {
+  for (let k = 1; k <= order.length; k++) {
+    const j = ((i + k * dir) % order.length + order.length) % order.length;
+    if (!order[j].bad) return j;
+  }
+  return i;
+}
+
+function freeUnused() {
+  const keep = [order[slide], order[nextIndex(slide)], fadeFrom];
+  for (const item of images) if (item.pic && !keep.includes(item)) freePic(item);
+}
+
+function show(i) {
+  if (i < 0 || i >= order.length) return;
+  const prev = order[slide];
+  if (order[i] !== prev) {
+    fadeFrom?.pic?.video?.pause();
+    fadeFrom = $('crossfade').checked && prev?.pic ? prev : null;
+    if (!fadeFrom) prev?.pic?.video?.pause();
+  }
+  slide = i;
+  slideT = 0;
+  const v = order[slide].pic?.video;
+  if (v) v.currentTime = 0;
+  freeUnused();
+  [...$('thumbs').children].forEach((el, j) => el.classList.toggle('current', images[j] === order[slide]));
+  sendLive();
+}
+
+// Called every frame. Only moves on once the next picture is decoded, so there's never a blank gap.
+function stepSlides(dt) {
+  if (!order.length) return;
+  if (order[slide].bad) {
+    const n = nextIndex(slide);
+    if (n !== slide && !following) show(n);
+    return;
+  }
+  const n = nextIndex(slide);
+  prepare(order[slide]);
+  prepare(order[n]);
+  slideT += dt;
+  if (fadeFrom && slideT >= FADE) {
+    fadeFrom.pic?.video?.pause();
+    fadeFrom = null;
+  }
+  if (!following && n !== slide && order[n].pic && order[slide].pic && slideT >= secsFor(order[slide])) show(n);
+}
+
+function rebuildOrder() {
+  const cur = order[slide];
+  order = [...images];
+  if ($('shuffle').checked) {
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+  }
+  slide = Math.max(0, order.indexOf(cur));
+  if (!images.includes(fadeFrom)) fadeFrom = null;
+  freeUnused();
+}
+
+function renderThumbs() {
+  $('picturesBtn').textContent = `Pictures… (${images.length})`;
+  if (!$('imagesDlg').open) return;
+  $('thumbs').replaceChildren(...images.map(item => {
+    const el = document.createElement('div');
+    el.className = 'thumb';
+    el.classList.toggle('current', item === order[slide]);
+    el.classList.toggle('bad', !!item.bad);
+    el.title = item.bad || item.name;
+    const media = document.createElement(item.kind === 'video' ? 'video' : 'img');
+    if (item.kind === 'video') {
+      media.muted = true;
+      media.preload = 'metadata';
+    } else media.loading = 'lazy';
+    media.src = item.url || (item.thumb ||= URL.createObjectURL(item.blob));
+    const x = document.createElement('button');
+    x.textContent = '✕';
+    x.title = 'Remove';
+    x.onclick = e => { e.stopPropagation(); removeImage(item); imagesChanged(); };
+    const secs = document.createElement('input');
+    secs.type = 'number';
+    secs.min = 1;
+    secs.placeholder = item.kind === 'video' ? 'full' : `${slideSecs()}s`;
+    secs.title = 'Seconds to show this one';
+    secs.value = item.secs || '';
+    secs.onclick = e => e.stopPropagation();
+    secs.onchange = () => { item.secs = +secs.value > 0 ? +secs.value : undefined; saveImages(); sendLive(); };
+    el.onclick = () => show(order.indexOf(item));
+    el.append(media, x, secs);
+    if (item.kind === 'video') el.insertAdjacentHTML('beforeend', '<span class="badge">▶︎ video</span>');
+    return el;
+  }));
+}
+
+function saveImages() {
+  if (following) return; // a live viewer's pictures are the host's
+  // URL items are saved as just the URL and fetched again next time
+  const list = images.map(({ name, url, blob, kind, secs }) => url ? { name, url, kind, secs } : { name, blob, kind, secs });
+  idb('readwrite', s => s.put(list, 'images')).catch(() => {});
+}
+
+function imagesChanged() {
+  rebuildOrder();
+  renderThumbs();
+  saveImages();
+  sendLive();
+}
+
+function addImages(items) {
+  if (!items.length) return;
+  images.push(...items.map(i => ({ ...i, kind: i.kind || kindOf(i.name || '') })));
+  imagesChanged();
+}
+function addFiles(files) {
+  addImages(files.filter(f => isImageFile(f) || isVideoFile(f))
+    .map(f => ({ name: f.name, blob: f, kind: isVideoFile(f) ? 'video' : 'image' })));
+}
+function addUrls(urls) {
+  const have = new Set(images.map(i => i.url));
+  addImages([...new Set(urls)].filter(u => u && !have.has(u)).map(url => ({ name: urlName(url), url })));
+}
+// Caller runs imagesChanged() afterwards
+function removeImage(item) {
+  images.splice(images.indexOf(item), 1);
+  freePic(item);
+  if (item.thumb) URL.revokeObjectURL(item.thumb);
+}
+
+const dlgStatus = $('dlgStatus');
+$('picturesBtn').onclick = () => {
+  setStatus('', false, dlgStatus);
+  $('imagesDlg').showModal();
+  renderThumbs();
+};
+$('closeImages').onclick = () => $('imagesDlg').close();
+$('imagesDlg').addEventListener('click', e => { if (e.target === $('imagesDlg')) $('imagesDlg').close(); }); // backdrop
+$('pickImages').onclick = () => $('imageFiles').click();
+$('pickFolder').onclick = () => $('imageFolder').click();
+$('imageFiles').onchange = () => { addFiles([...$('imageFiles').files]); $('imageFiles').value = ''; };
+$('imageFolder').onchange = () => {
+  const files = [...$('imageFolder').files]
+    .filter(f => isImageFile(f) || isVideoFile(f))
+    .sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath, undefined, { numeric: true }));
+  addFiles(files);
+  setStatus(`Added ${files.length} from the folder`, false, dlgStatus);
+  $('imageFolder').value = '';
+};
+$('addUrls').onclick = () => {
+  addUrls($('imageUrls').value.split(/\s+/));
+  $('imageUrls').value = '';
+};
+// Reddit login: the implicit OAuth flow in a popup. The popup comes back to this page with the
+// token in its #hash, stores it (see finishRedditLogin) and closes; this window notices.
+const redditRedirect = () => new URL('.', location.href).href;
+function redditToken() {
+  try {
+    const t = JSON.parse(localStorage.getItem('hypp-reddit'));
+    if (t && t.expires > Date.now()) return t.token;
+  } catch {}
+  return null;
+}
+function redditLogin() {
+  const state = crypto.randomUUID();
+  try { localStorage.setItem('hypp-reddit-state', state); } catch {}
+  const url = 'https://www.reddit.com/api/v1/authorize?' + new URLSearchParams({
+    client_id: REDDIT_CLIENT_ID, response_type: 'token', state, redirect_uri: redditRedirect(), scope: 'read',
+  });
+  const popup = window.open(url, 'reddit-login', 'width=600,height=760');
+  if (!popup) {
+    location.href = url; // popup blocked: log in in this tab instead
+    return new Promise(() => {});
+  }
+  return new Promise(resolve => {
+    const timer = setInterval(() => {
+      if (redditToken()) resolve(true);
+      else if (popup.closed) resolve(false);
+      else return;
+      clearInterval(timer);
+    }, 300);
+  });
+}
+function finishRedditLogin() {
+  const p = new URLSearchParams(location.hash.slice(1) || location.search);
+  history.replaceState(null, '', location.pathname);
+  const ok = p.get('access_token') && p.get('state') === localStorage.getItem('hypp-reddit-state');
+  if (ok) {
+    // Expire a minute early so a request never goes out with a token that's about to lapse
+    const expires = Date.now() + ((+p.get('expires_in') || 3600) - 60) * 1000;
+    localStorage.setItem('hypp-reddit', JSON.stringify({ token: p.get('access_token'), expires }));
+  }
+  if (window.opener) window.close();
+  else setStatus(ok ? 'Logged in to Reddit. Open Pictures to add from a subreddit.' : `Reddit login didn't finish${p.get('error') ? ` (${p.get('error')})` : ''}.`, !ok);
+}
+
+// Direct image links from a subreddit's listing, including every picture in gallery posts
+async function redditImages(sub, sort) {
+  const res = await fetch(`https://oauth.reddit.com/r/${encodeURIComponent(sub)}/${sort}?limit=100&t=all&raw_json=1`, {
+    headers: { Authorization: `bearer ${redditToken()}` },
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('hypp-reddit');
+    throw new Error('Your Reddit login expired. Click again to log in.');
+  }
+  if (!res.ok) throw new Error(`r/${sub}: Reddit said HTTP ${res.status}${res.status === 404 ? ' (no such subreddit?)' : ''}`);
+  const urls = [];
+  for (const { data: p } of (await res.json()).data.children) {
+    if (p.is_gallery && p.media_metadata) {
+      // Gallery links point at preview.redd.it, which blocks other pages; i.redd.it serves the same file
+      const ids = p.gallery_data?.items.map(i => i.media_id) || Object.keys(p.media_metadata);
+      for (const id of ids) {
+        const ext = p.media_metadata[id]?.m?.split('/')[1];
+        if (ext) urls.push(`https://i.redd.it/${id}.${ext === 'jpeg' ? 'jpg' : ext}`);
+      }
+    } else if (/\.(jpe?g|png|gif|webp)(\?|$)/i.test(p.url)) urls.push(p.url);
+  }
+  return urls;
+}
+
+$('addReddit').onclick = async () => {
+  if (!REDDIT_CLIENT_ID) return setStatus('Reddit needs a one-time setup: see REDDIT_CLIENT_ID at the top of index.html.', true, dlgStatus);
+  // Accepts "pics", "r/pics" or a full reddit.com/r/pics link
+  const sub = $('subreddit').value.trim().replace(/^.*?\br\//, '').replace(/[/?#].*$/, '');
+  if (!sub) return;
+  if (!redditToken()) {
+    setStatus('Log in to Reddit in the window that opened...', false, dlgStatus);
+    if (!await redditLogin()) return setStatus(`Reddit login didn't finish.`, true, dlgStatus);
+  }
+  setStatus(`Loading r/${sub}...`, false, dlgStatus);
+  try {
+    const urls = await redditImages(sub, $('redditSort').value);
+    if (!urls.length) throw new Error(`No pictures found in r/${sub}`);
+    addUrls(urls);
+    setStatus(`Added ${urls.length} pictures from r/${sub}`, false, dlgStatus);
+  } catch (e) {
+    setStatus(e.message || `Couldn't reach Reddit.`, true, dlgStatus);
+  }
+};
+
+$('clearImages').onclick = () => {
+  [...images].forEach(removeImage);
+  imagesChanged();
+};
+$('shuffle').addEventListener('change', () => { rebuildOrder(); renderThumbs(); sendLive(); });
+
+let mainBlob, spiralBlob;
 let overlayBufs = [];
 let overlayNodes = [];
 const decoded = new WeakMap();
@@ -299,7 +682,6 @@ async function loadAll(verb = 'Loaded') {
   try {
     ensureAudioGraph();
     const main = await getSlot($('audioFile'), $('audioUrl'), true);
-    const image = await getSlot($('imageFile'), $('imageUrl'));
     const spiral = await getSlot($('spiralFile'), $('spiralUrl'));
     const overlays = [];
     for (const row of $('overlays').children) {
@@ -315,15 +697,9 @@ async function loadAll(verb = 'Loaded') {
       else await setPlayer(wiredAudio, URL.createObjectURL(main.blob));
       mainBlob = mainKey;
     }
-    if (image && image.blob !== imageBlob) {
-      imageBlob = image.blob;
-      // Decode the new one before freeing the old, so a frame never tries to draw a freed image
-      const old = picture;
-      picture = await decodeImage(imageBlob);
-      old.frames.forEach(f => f.bmp.close());
-    }
     if (spiral && spiral.blob !== spiralBlob) {
       spiralBlob = spiral.blob;
+      // Decode the new one before freeing the old, so a frame never tries to draw a freed image
       const old = customSpiral;
       customSpiral = await decodeImage(spiralBlob);
       old.frames.forEach(f => f.bmp.close());
@@ -331,9 +707,10 @@ async function loadAll(verb = 'Loaded') {
     overlayBufs = await Promise.all(overlays.map(o => decodeOverlay(o.blob)));
     startOverlays();
 
-    idb('readwrite', s => s.put({ main, image, spiral, overlays }, 'session')).catch(() => {});
-    const names = [main, image, spiral, ...overlays].filter(Boolean).map(s => s.listenOnly ? `${s.name} (listen-only)` : s.name);
+    if (!following) idb('readwrite', s => s.put({ main, spiral, overlays }, 'session')).catch(() => {});
+    const names = [main, spiral, ...overlays].filter(Boolean).map(s => s.listenOnly ? `${s.name} (listen-only)` : s.name);
     setStatus(names.length ? `${verb}: ${names.join(', ')}` : '');
+    sendLive();
   } catch (e) {
     setStatus(e.message, true);
   }
@@ -412,7 +789,7 @@ $('seek').oninput = () => {
 };
 
 // Space toggles play unless typing. Blocking keyup too stops a focused button from also "clicking".
-const isTyping = e => !!e.target.matches?.('input[type=text]');
+const isTyping = e => !!e.target.matches?.('input[type=text], input[type=number], textarea');
 document.addEventListener('keydown', e => {
   if (e.code !== 'Space' || isTyping(e)) return;
   e.preventDefault();
@@ -467,6 +844,8 @@ document.addEventListener('keydown', e => {
       $('spiralOn').checked = !$('spiralOn').checked;
       $('spiralOn').dispatchEvent(new Event('input', { bubbles: true })); // saves the setting
     },
+    KeyN: () => { if (!following) show(nextIndex(slide)); },
+    KeyP: () => { if (!following) show(nextIndex(slide, -1)); },
   };
   const action = actions[e.code];
   if (!action) return;
@@ -665,6 +1044,44 @@ function audioLevel() {
 }
 
 const tilePatterns = new WeakMap(); // one repeating pattern per image / GIF frame
+
+// The drawable for a slide right now: a GIF frame, a still, or the playing video
+function slideSource(item, now) {
+  const p = item?.pic;
+  if (!p) return null;
+  if (!p.video) return currentFrame(p, now);
+  if (p.video.paused) p.video.play().catch(() => {});
+  return p.video.readyState >= 2 ? p.video : null;
+}
+
+function drawPicture(src, W, H) {
+  const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+  // Fill (full screen only) crops the picture to cover the screen, so there's nothing to tile
+  const fill = document.fullscreenElement && stage.classList.contains('fill') && !recorder;
+  if ($('tileSmall').checked && !fill) {
+    // Tile: one copy centred, shrunk to fit if it's bigger than the frame but never stretched up,
+    // and repeated into any leftover space (sides, top/bottom, or both).
+    // Sizes are in 1280x720 units, so tiles look the same in the preview, full screen and exports.
+    const unit = Math.hypot(W, H) / Math.hypot(1280, 720);
+    const s = Math.min(unit, W / sw, H / sh);
+    const tw = sw * s, th = sh * s;
+    // A video's pattern is a snapshot of one frame, so it's made fresh every frame
+    let pattern = src.videoWidth ? null : tilePatterns.get(src);
+    if (!pattern) {
+      pattern = ctx.createPattern(src, 'repeat');
+      if (!src.videoWidth) tilePatterns.set(src, pattern);
+    }
+    pattern.setTransform(new DOMMatrix().translate((W - tw) / 2, (H - th) / 2).scale(s));
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, W, H);
+  } else {
+    // Fit shows the whole picture (stretched up if small); Fill crops it to cover the screen
+    const s = (fill ? Math.max : Math.min)(W / sw, H / sh);
+    const w = sw * s, h = sh * s;
+    ctx.drawImage(src, (W - w) / 2, (H - h) / 2, w, h);
+  }
+}
+
 let last = performance.now();
 function render(now) {
   const dt = (now - last) / 1000;
@@ -673,26 +1090,14 @@ function render(now) {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
 
-  const bmp = currentFrame(picture, now);
-  // Fill (full screen only) crops the picture to cover the screen, so there's nothing to tile
-  const fill = document.fullscreenElement && stage.classList.contains('fill') && !recorder;
-  if (bmp && $('tileSmall').checked && !fill) {
-    // Tile: one copy centred, shrunk to fit if it's bigger than the frame but never stretched up,
-    // and repeated into any leftover space (sides, top/bottom, or both).
-    // Sizes are in 1280x720 units, so tiles look the same in the preview, full screen and exports.
-    const unit = Math.hypot(W, H) / Math.hypot(1280, 720);
-    const s = Math.min(unit, W / bmp.width, H / bmp.height);
-    const tw = bmp.width * s, th = bmp.height * s;
-    let pattern = tilePatterns.get(bmp);
-    if (!pattern) tilePatterns.set(bmp, pattern = ctx.createPattern(bmp, 'repeat'));
-    pattern.setTransform(new DOMMatrix().translate((W - tw) / 2, (H - th) / 2).scale(s));
-    ctx.fillStyle = pattern;
-    ctx.fillRect(0, 0, W, H);
-  } else if (bmp) {
-    // Fit shows the whole picture (stretched up if small); Fill crops it to cover the screen
-    const s = (fill ? Math.max : Math.min)(W / bmp.width, H / bmp.height);
-    const w = bmp.width * s, h = bmp.height * s;
-    ctx.drawImage(bmp, (W - w) / 2, (H - h) / 2, w, h);
+  stepSlides(dt);
+  const src = slideSource(order[slide], now);
+  const from = fadeFrom && slideSource(fadeFrom, now);
+  if (from) drawPicture(from, W, H);
+  if (src) {
+    ctx.globalAlpha = from ? Math.min(1, slideT / FADE) : 1;
+    drawPicture(src, W, H);
+    ctx.globalAlpha = 1;
   }
 
   if ($('spiralOn').checked) {
@@ -775,7 +1180,8 @@ $('exportBtn').onclick = async () => {
   await audio.play();
 };
 
-// Drag & drop: onto a box/row targets it; elsewhere images go to the picture, audio to main (if empty) or a new overlay
+// Drag & drop: onto a box/row targets it; elsewhere images go to the slideshow, audio to main (if empty) or a new overlay.
+// Images dragged from another web page arrive as links instead of files.
 function setFile(fileInput, file) {
   const dt = new DataTransfer();
   dt.items.add(file);
@@ -790,9 +1196,17 @@ document.addEventListener('drop', e => {
   e.preventDefault();
   dragDepth = 0;
   document.body.classList.remove('dragging');
+  if (following) return;
+  const inDialog = !!e.target.closest('dialog');
   const target = e.target.closest('#overlays .overlay, fieldset');
-  [...e.dataTransfer.files].forEach((file, i) => {
-    const isImage = file.type.startsWith('image/');
+  const files = [...e.dataTransfer.files];
+  if (!files.length) {
+    const urls = e.dataTransfer.getData('text/uri-list').split(/\r?\n/).filter(u => u && !u.startsWith('#'));
+    return addUrls(urls);
+  }
+  const dropped = [];
+  files.forEach((file, i) => {
+    const isImage = isImageFile(file);
     if (i === 0 && target?.classList.contains('overlay')) setFile(target.querySelector('input[type=file]'), file);
     else if (i === 0 && target?.contains($('audioFile')) && !isImage) setFile($('audioFile'), file);
     else if (i === 0 && target?.id === 'spiralBox' && isImage) {
@@ -801,15 +1215,17 @@ document.addEventListener('drop', e => {
       $('spiralPattern').dispatchEvent(new Event('change'));
       $('spiralPattern').dispatchEvent(new Event('input', { bubbles: true }));
     }
-    else if (isImage) setFile($('imageFile'), file);
+    else if (isImage || (inDialog && isVideoFile(file))) dropped.push(file);
     else if (!mainBlob && !$('audioFile').files[0] && !(i === 0 && target?.contains($('addOverlay')))) setFile($('audioFile'), file);
     else setFile(addOverlayRow().querySelector('input[type=file]'), file);
   });
-  loadAll();
+  addFiles(dropped);
+  if (dropped.length < files.length) loadAll();
 });
 
 // Remember text fields and spiral settings
-const savedFields = ['audioUrl', 'imageUrl', 'spiralUrl', 'spiralPattern', 'startAt', 'spiralOn', 'spiralOpacity', 'spiralSpeed', 'spiralColor', 'volume', 'fsOnPlay', 'spiralReact', 'tileSmall'];
+const savedFields = ['audioUrl', 'spiralUrl', 'spiralPattern', 'startAt', 'spiralOn', 'spiralOpacity', 'spiralSpeed', 'spiralColor', 'volume', 'fsOnPlay', 'spiralReact', 'tileSmall', 'slideSecs', 'shuffle', 'crossfade', 'roomName'];
+const fieldValue = id => $(id).type === 'checkbox' ? $(id).checked : $(id).value;
 try {
   const saved = JSON.parse(localStorage.getItem('hypp') || '{}');
   for (const id of savedFields) {
@@ -820,21 +1236,298 @@ try {
 } catch {}
 applyVolume();
 document.addEventListener('input', () => {
+  if (following) return; // a live viewer's settings come from the host
   try {
-    localStorage.setItem('hypp', JSON.stringify(Object.fromEntries(
-      savedFields.map(id => [id, $(id).type === 'checkbox' ? $(id).checked : $(id).value]))));
+    localStorage.setItem('hypp', JSON.stringify(Object.fromEntries(savedFields.map(id => [id, fieldValue(id)]))));
   } catch {}
 });
 
-// Restore last loaded files
-idb('readonly', s => s.get('session')).then(session => {
-  if (!session) return;
-  $('audioFile').saved = session.main;
-  $('imageFile').saved = session.image;
-  $('spiralFile').saved = session.spiral;
-  session.overlays.forEach(addOverlayRow);
-  loadAll('Restored');
-}).catch(() => {});
+// ---- Sharing a setup (link) and live sessions ----
+// A setup is { fields, media: { audio, overlays, spiral }, images }, all as links.
+// Volume and "full screen on play" are the viewer's own business, so they aren't shared.
+const sharedFields = savedFields.filter(id => !['audioUrl', 'spiralUrl', 'volume', 'fsOnPlay', 'roomName'].includes(id));
+
+// `toUrl(blob)` turns a file from this computer into a link (live sessions upload it);
+// without it those are left out. Also returns a map of picture -> index in setup.images.
+async function buildSetup(toUrl) {
+  const link = async (saved, urlInput) => {
+    if (!saved) return urlInput?.value.trim() || null; // typed but not loaded yet
+    return saved.url || (toUrl ? await toUrl(saved.blob) : null);
+  };
+  const overlays = [];
+  for (const row of $('overlays').children) {
+    const [fileInput, urlInput] = row.querySelectorAll('input');
+    const url = await link(fileInput.saved, urlInput);
+    if (url) overlays.push(url);
+  }
+  const list = [], idx = new Map();
+  for (const item of images) {
+    const url = item.url || (toUrl ? await toUrl(item.blob) : null);
+    if (!url) continue;
+    idx.set(item, list.length);
+    list.push({ url, name: item.name, kind: item.kind, secs: item.secs });
+  }
+  const setup = {
+    fields: Object.fromEntries(sharedFields.map(id => [id, fieldValue(id)])),
+    media: {
+      audio: await link($('audioFile').saved, $('audioUrl')),
+      overlays,
+      spiral: $('spiralPattern').value === 'custom' ? await link($('spiralFile').saved, $('spiralUrl')) : null,
+    },
+    images: list,
+  };
+  return [setup, idx];
+}
+
+function applyFields(fields) {
+  for (const [id, v] of Object.entries(fields)) {
+    if (!sharedFields.includes(id)) continue;
+    if ($(id).type === 'checkbox') $(id).checked = v; else $(id).value = v;
+  }
+  $('spiralPattern').onchange();
+  document.dispatchEvent(new Event('input')); // saves them
+}
+
+function applyImages(list) {
+  [...images].forEach(removeImage);
+  images.push(...list.map(({ url, name, kind, secs }) => ({ url, name: name || urlName(url), kind: kind || kindOf(url), secs })));
+  imagesChanged();
+}
+
+async function applyMedia({ audio: audioLink, overlays, spiral }) {
+  for (const [fileInput, urlInput, url] of [[$('audioFile'), $('audioUrl'), audioLink], [$('spiralFile'), $('spiralUrl'), spiral]]) {
+    fileInput.value = '';
+    fileInput.saved = null;
+    urlInput.value = url || '';
+  }
+  $('overlays').replaceChildren();
+  for (const url of overlays) addOverlayRow().querySelectorAll('input')[1].value = url;
+  await loadAll(following ? 'Live' : 'Opened shared setup');
+}
+
+// Compressed JSON in the link's #hash, so nothing is sent anywhere
+const toB64Url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+async function packSetup(setup) {
+  const stream = new Blob([JSON.stringify(setup)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  return toB64Url(new Uint8Array(await new Response(stream).arrayBuffer()));
+}
+async function unpackSetup(text) {
+  const bin = atob(text.replace(/-/g, '+').replace(/_/g, '/'));
+  const stream = new Blob([Uint8Array.from(bin, c => c.charCodeAt(0))]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return JSON.parse(await new Response(stream).text());
+}
+
+// The clipboard can wait forever on a permission prompt, so give up after a second
+async function copyLink(link) {
+  try {
+    return await Promise.race([navigator.clipboard.writeText(link).then(() => true), new Promise(r => setTimeout(r, 1000, false))]);
+  } catch {
+    return false;
+  }
+}
+
+$('shareBtn').onclick = async () => {
+  const [setup] = await buildSetup();
+  const isLocal = saved => saved && !saved.url;
+  const local = images.filter(i => !i.url).length + [$('audioFile'), $('spiralFile'), ...$('overlays').querySelectorAll('input[type=file]')]
+    .filter(f => isLocal(f.saved)).length;
+  const link = `${location.origin}${location.pathname}#setup=${await packSetup(setup)}`;
+  const copied = await copyLink(link);
+  setStatus((copied ? 'Link copied.' : `Copy this link:\n${link}`) +
+    (local ? `\n${local} file(s) from your computer aren't included. Use links, or Go live, to share them.` : ''));
+};
+
+// Live sessions need server.js; on plain static hosting the button stays hidden
+let live = null; // host side: { id, key }
+let uploads, liveBeat, liveTimer, liveSending = false, liveAgain = false;
+const hasServer = fetch('live/ping').then(r => r.ok && r.text()).then(t => t === 'ok').catch(() => false);
+hasServer.then(ok => { if (ok) $('liveRow').hidden = false; });
+
+async function liveFetch(path, opts = {}) {
+  const res = await fetch(`live/${live.id}${path}`, { ...opts, headers: { 'x-key': live.key, ...opts.headers } });
+  if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+  return res.json();
+}
+function upload(blob) {
+  if (!uploads.has(blob)) {
+    uploads.set(blob, liveFetch('/file', { method: 'POST', body: blob, headers: { 'content-type': blob.type || 'application/octet-stream' } })
+      .then(r => r.url)
+      .catch(e => { uploads.delete(blob); throw e; }));
+  }
+  return uploads.get(blob);
+}
+
+function sendLive() {
+  if (!live) return;
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(pushLive, 150);
+}
+async function pushLive() {
+  if (!live) return;
+  if (liveSending) return liveAgain = true;
+  liveSending = true;
+  try {
+    const [setup, idx] = await buildSetup(upload);
+    const ord = order.map(it => idx.get(it)).filter(i => i !== undefined);
+    // Playback is read last, after any uploads, so it's current when it reaches the server
+    const state = { setup, slide: { order: ord, i: ord.indexOf(idx.get(order[slide])) }, play: { playing: !audio.paused, time: audio.currentTime } };
+    const { viewers } = await liveFetch('/state', { method: 'POST', body: JSON.stringify(state), headers: { 'content-type': 'application/json' } });
+    if (live) $('liveBtn').textContent = `End live (${viewers} watching)`;
+  } catch (e) {
+    if (live) setStatus(`Live session: ${e.message}`, true);
+  }
+  liveSending = false;
+  if (liveAgain) {
+    liveAgain = false;
+    pushLive();
+  }
+}
+['play', 'pause', 'seeked'].forEach(ev => onAudio(ev, sendLive));
+document.addEventListener('input', sendLive);
+document.addEventListener('change', sendLive);
+
+$('liveBtn').onclick = async () => {
+  if (live) {
+    fetch(`live/${live.id}`, { method: 'DELETE', headers: { 'x-key': live.key } }).catch(() => {});
+    live = null;
+    clearInterval(liveBeat);
+    $('liveBtn').textContent = 'Go live';
+    $('roomName').disabled = false;
+    return setStatus('Live session ended.');
+  }
+  // A named room keeps its key here, so reloading the page takes the same room back
+  const name = $('roomName').value.trim().toLowerCase().replace(/\s+/g, '-');
+  let keys = {};
+  try { keys = JSON.parse(localStorage.getItem('hypp-rooms') || '{}'); } catch {}
+  let res;
+  try {
+    res = await fetch('live', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(name ? { name, key: keys[name] } : {}) });
+  } catch {
+    return setStatus(`Couldn't reach the server for a live session.`, true);
+  }
+  if (!res.ok) return setStatus(`Couldn't start a live session: ${await res.text()}`, true);
+  live = await res.json();
+  if (name) {
+    keys[name] = live.key;
+    try { localStorage.setItem('hypp-rooms', JSON.stringify(keys)); } catch {}
+  }
+  uploads = new WeakMap();
+  $('roomName').disabled = true;
+  const link = new URL(live.id, location.href).href;
+  const copied = await copyLink(link);
+  setStatus(`You're live. ${copied ? 'Link copied' : 'Share this link'}:\n${link}\nFiles from your computer are uploaded so viewers can see and hear them.`);
+  $('liveBtn').textContent = 'End live';
+  liveBeat = setInterval(sendLive, 5000); // keeps viewers' playback in step
+  sendLive();
+};
+
+function joinLive(id) {
+  following = true;
+  document.body.classList.add('viewer');
+  $('viewerNote').hidden = false;
+  $('playBtn').disabled = $('seek').disabled = true;
+  $('joinBtn').hidden = false;
+  setStatus('Connecting to the live session...');
+  let joined = false, latest = null, applying = Promise.resolve(), gotState = false;
+  const keys = {};
+
+  // Browsers only play sound after a click, so viewers click once to join
+  $('joinBtn').onclick = async () => {
+    ensureAudioGraph();
+    await audioCtx.resume();
+    joined = true;
+    $('joinBtn').hidden = true;
+    if (latest) syncPlay(latest);
+  };
+
+  function syncPlay(msg) {
+    if (!joined || !audio.src) return;
+    const { playing, time } = msg.state.play;
+    // `age` is how long the server had held this state; add the time since it arrived here
+    const target = time + (playing ? (msg.age + performance.now() - msg.receivedAt) / 1000 : 0);
+    if (Math.abs(audio.currentTime - target) > 0.75) audio.currentTime = target;
+    if (playing && audio.paused) audio.play().catch(() => {});
+    if (!playing && !audio.paused) audio.pause();
+  }
+
+  async function applyLive(msg) {
+    const { setup, slide: s } = msg.state;
+    const changed = part => {
+      const k = JSON.stringify(setup[part]);
+      if (keys[part] === k) return false;
+      keys[part] = k;
+      return true;
+    };
+    if (changed('fields')) applyFields(setup.fields);
+    if (changed('images')) applyImages(setup.images);
+    if (changed('media')) await applyMedia(setup.media);
+    // Follow the host's picture order and current picture
+    const cur = order[slide];
+    order = s.order.map(i => images[i]).filter(Boolean);
+    slide = Math.max(0, order.indexOf(cur));
+    if (s.i >= 0 && s.i !== slide) show(s.i); else freeUnused();
+    latest = msg;
+    syncPlay(msg);
+    if (!gotState) {
+      gotState = true;
+      setStatus('Connected to the live session.');
+    }
+  }
+
+  const es = new EventSource(`live/${encodeURIComponent(id)}/events`);
+  es.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    msg.receivedAt = performance.now();
+    applying = applying.then(() => applyLive(msg)).catch(err => setStatus(err.message, true));
+  };
+  es.addEventListener('end', () => {
+    es.close();
+    audio.pause();
+    $('joinBtn').hidden = true;
+    setStatus('The host ended the live session.');
+  });
+  es.onerror = () => {
+    if (es.readyState !== EventSource.CLOSED) return; // otherwise it reconnects by itself
+    $('joinBtn').hidden = true;
+    setStatus(`This live session doesn't exist or has ended.`, true);
+  };
+}
+
+// Start up: coming back from Reddit login, a live link (/room or ?live=room) joins the session,
+// a share link opens its setup, otherwise restore last time
+async function start() {
+  const back = location.hash + location.search;
+  if (/state=/.test(back) && /(access_token|error)=/.test(back)) {
+    finishRedditLogin();
+    if (window.opener) return;
+  }
+  // A one-word path like /my-room is a room, but only when server.js is serving the page
+  const liveId = new URLSearchParams(location.search).get('live') ||
+    (location.pathname.match(/^\/([^/.]+)$/) && await hasServer && location.pathname.slice(1));
+  const sharedSetup = location.hash.startsWith('#setup=') && location.hash.slice('#setup='.length);
+  if (liveId) return joinLive(liveId);
+  if (sharedSetup) {
+    history.replaceState(null, '', location.pathname + location.search); // so reloading doesn't re-apply it
+    return unpackSetup(sharedSetup)
+      .then(setup => {
+        applyFields(setup.fields);
+        applyImages(setup.images);
+        return applyMedia(setup.media);
+      })
+      .catch(() => setStatus('This share link is broken or incomplete.', true));
+  }
+  idb('readonly', s => s.get('session')).then(session => {
+    if (!session) return;
+    $('audioFile').saved = session.main;
+    $('spiralFile').saved = session.spiral;
+    session.overlays.forEach(addOverlayRow);
+    loadAll('Restored');
+  }).catch(() => {});
+  idb('readonly', s => s.get('images'))
+    .then(saved => saved ? addImages(saved) : addUrls(DEFAULT_IMAGE_URLS))
+    .catch(() => addUrls(DEFAULT_IMAGE_URLS));
+}
+start();
 </script>
 </body>
 </html>
